@@ -13,6 +13,7 @@
   GET  /api/keys          -> Key 列表（管理员=全部；用户=只看自己的）
   POST /api/keys/create   -> 创建虚拟 Key（归属当前登录用户，明文只返回一次）
   POST /api/keys/delete   -> 吊销虚拟 Key
+  POST /api/debug-chat    -> 调试页试聊（自动用当前用户名下的「面板调试」Key 调 5555）
   GET  /api/users         -> 用户列表（仅管理员）
   POST /api/users/create  -> 建用户（仅管理员，POST /user/new + 密码哈希入 metadata）
   POST /api/users/reset-password -> 重置用户密码（仅管理员，POST /user/update）
@@ -30,6 +31,7 @@ import re
 import secrets
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -371,6 +373,73 @@ def delete_user(user_id):
     return n > 0, ("用户 %s 已删除" % user_id if n > 0 else "代理未确认删除，请刷新核实")
 
 
+DEBUG_KEYS = {}  # user -> 「面板调试」Key 明文（内存态；面板重启后会重建一把）
+
+
+def get_debug_key(user):
+    """为调试页取当前用户的专属 Key：首次使用自动创建（花费归属该用户、受预算控制）。"""
+    if user in DEBUG_KEYS:
+        return DEBUG_KEYS[user], None
+    resp, err = proxy_api("POST", "/key/generate", {"user_id": user, "key_alias": "面板调试"})
+    if err:
+        return None, err
+    key = resp.get("key")
+    DEBUG_KEYS[user] = key
+    return key, None
+
+
+def debug_chat(user, body):
+    """以当前用户的调试 Key 调 5555 /v1/chat/completions，返回回复与用量。"""
+    key, err = get_debug_key(user)
+    if err:
+        return None, err
+    model = str(body.get("model") or "chat")
+    payload = {
+        "model": model,
+        "messages": body.get("messages") or [{"role": "user", "content": "hi"}],
+        "temperature": body.get("temperature", 0.7),
+        "max_tokens": body.get("max_tokens", 1024),
+    }
+    req = urllib.request.Request(
+        "http://127.0.0.1:5555/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"), method="POST",
+        headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
+    )
+    started = time.monotonic()
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(req, timeout=120) as r:
+            resp = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try:
+            detail = json.loads(e.read().decode("utf-8"))
+            msg = detail.get("error", {})
+            msg = msg.get("message") if isinstance(msg, dict) else msg
+        except Exception:
+            msg = "HTTP %d" % e.code
+        return None, str(msg)
+    except Exception as e:
+        return None, str(e)
+    latency_ms = int((time.monotonic() - started) * 1000)
+    choices = resp.get("choices") or []
+    usage = resp.get("usage") or {}
+    out = {
+        "content": (choices[0].get("message") or {}).get("content") if choices else None,
+        "model": resp.get("model"),
+        "latency_ms": latency_ms,
+        "prompt_tokens": usage.get("prompt_tokens"),
+        "completion_tokens": usage.get("completion_tokens"),
+    }
+    # 用 config.yaml 显式单价核算该次费用（与 docs/cost-tracking.md 同一口径）
+    for p in read_prices():
+        if p["model"] == model and p["in"] is not None and p["out"] is not None:
+            out["cost_usd"] = round(
+                usage.get("prompt_tokens", 0) * p["in"] * 1e-6
+                + usage.get("completion_tokens", 0) * p["out"] * 1e-6, 8)
+            break
+    return out, None
+
+
 def filter_usage_for_user(rows, username):
     """普通用户只能看到自己名下 Key 的用量（按 Key 指纹 = token 哈希前 8 位过滤）。"""
     keys, err = list_user_keys(username)
@@ -502,6 +571,10 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/keys/delete":
             ok, msg = delete_key(str(payload.get("hash", "")))
             self._json(200 if ok else 400, {"ok": ok, "message": msg})
+        elif self.path == "/api/debug-chat":
+            out, err = debug_chat(s["user"], payload)
+            self._json(200 if out is not None else 400,
+                       dict(out or {}, ok=out is not None, message=err or ""))
         elif self.path == "/api/users/create" and s["role"] == "admin":
             ok, msg = create_user(payload)
             self._json(200 if ok else 400, {"ok": ok, "message": msg})
