@@ -14,9 +14,18 @@ data/*.pid
 data/logs/
 data/backup/
 
+# PostgreSQL 便携版 —— 密码文件与整个数据目录绝不提交
+data/.pg-pass
+data/pg-pwfile.txt
+data/pgdata/
+
 # LiteLLM 本地数据
 *.db
 litellm_settings.json
 
 # 用量监控数据（运行时数据，不提交）
 data/usage.jsonl
+
+# 计费单价编辑的自动备份
+config/config.yaml.bak
+data/pg-log.txt

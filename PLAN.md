@@ -182,16 +182,21 @@ Git。数据库数据目录应按实际容器卷配置进行持久化。
 - 错误模型名能返回清晰错误。
 - 故障切换行为经过实际测试，不以配置存在作为验收依据。
 
-### Phase 3：代理 Key 和 PostgreSQL
+### Phase 3：代理 Key 和 PostgreSQL（2026-10-26 完成）
 
 任务：
 
-- [ ] 增加 PostgreSQL 容器。
-- [ ] 配置数据库连接。
-- [ ] 按 LiteLLM 对应版本的官方流程初始化数据库。
-- [ ] 创建独立的虚拟 Key。
-- [ ] 为 Key 设置模型访问权限和可用预算。
-- [ ] 验证 Key 的创建、查询、撤销和持久化。
+- [x] 增加 PostgreSQL。（未用容器：本机无 WSL2，改用 **PostgreSQL 17.6 便携版**，与用户"17 以上"要求一致）
+- [x] 配置数据库连接。（`.env` DATABASE_URL，仅监听 127.0.0.1:5432）
+- [x] 按 LiteLLM 对应版本的官方流程初始化数据库。（prisma generate + db push，98 张表；见 docs/deployment.md §6）
+- [x] 创建独立的虚拟 Key。（POST /key/generate 已实测）
+- [x] 为 Key 设置模型访问权限和可用预算。（models / max_budget / budget_duration 实测）
+- [x] 验证 Key 的创建、查询、撤销和持久化。（创建→200 鉴权通过、吊销→401、数据落 PG 持久化）
+- [x] 追加：5556 面板「我的 Key」页 —— 创建/列表/吊销全中文界面，master key 只在 usage_server 服务端持有。
+- [x] 追加：5556 多用户（用户要求）—— 登录页 + 角色（admin/user），
+  用户数据存 5555（POST /user/new，密码哈希入 metadata），Key 挂 user_id；
+  管理员看全部/管用户，普通用户只见自己的 Key 与用量（按 Key 指纹过滤 usage）；
+  用户管理页：建用户 / 重置密码 / 删除。全部走 LiteLLM 官方用户接口，自建零数据表。
 
 交付物：
 
@@ -354,6 +359,27 @@ Git。数据库数据目录应按实际容器卷配置进行持久化。
   `scripts/usage_report.py` 按模型/天/Key 指纹出汇总；计费标准固化于 config.yaml
   显式单价，规则见 docs/cost-tracking.md。
 
+### 2026-10-26 Phase 2/3 完成（路由别名 + PostgreSQL 17.6 + 虚拟 Key + 中文管理面板）
+
+- PostgreSQL 17.6 便携版（用户指定 17+）：zip 在 `D:\routine\offline-packages\installers\postgresql-17.6-1-windows-x64-binaries.zip`，
+  数据目录 `data\pgdata`，仅监听回环，启停已集成 start.ps1 / stop.ps1。
+- prisma generate + db push 完成（98 张官方 schema 表），代理带库启动；
+  鉴权收紧：无 Key / 错 Key 均返回 401（tests/test_auth.py 已按 401 断言）。
+- 虚拟 Key 全生命周期实测：创建（models/max_budget/budget_duration）→ 200 调用成功 →
+  吊销 → 立即 401；持久化在 PG，重启后仍在。
+- 中文管理面板（127.0.0.1:5556，替代 litellm 自带的 /ui 开发者界面）：
+  - 登录页 + 多用户角色（admin / 普通用户），用户数据走 5555 用户接口存 PostgreSQL；
+  - 概览：KPI、每日费用折线、请求数条形图、按模型汇总表（普通用户只看自己的用量）；
+  - 我的 Key：卡片式创建/查看/吊销，花费进度条、预算周期、明文 Key 只在创建时显示一次；
+  - 用户管理（管理员）：建用户/重置密码/删除；
+  - 设置（管理员）：服务状态、计费单价在线修改（写回 config.yaml 自动备份）、代理重启；
+  - master key 只在 scripts/usage_server.py 服务端持有，浏览器端不可见；
+    会话为内存态 HttpOnly Cookie，重启面板后需重新登录。
+- 实测通过：未登录 401、管理员/用户登录、用户建 Key（归属正确）、
+  管理员/用户视角 Key 列表隔离、重置密码后旧密码失效、删除用户。
+- 测试：6 passed / 7 skipped（跳过用例等待上游真实 Key）。
+- backup.ps1 增加 pg_dump 数据库逻辑备份（litellm-db.dump，自定义格式）。
+
 ### 待办（用户侧）
 
 1. 在 `.env` 填入 OPENAI_API_KEY / DEEPSEEK_API_KEY，重跑 `scripts/test.ps1`
@@ -363,5 +389,5 @@ Git。数据库数据目录应按实际容器卷配置进行持久化。
 ### 后续阶段
 
 - Phase 2：多模型别名已配置，待真实 Key 验证路由与故障切换。
-- Phase 3：PostgreSQL + prisma（本机可装便携版免管理员），解决 401 收紧与虚拟 Key。
+- Phase 4：用量费用已具备（回调 + 面板），待验证并发下的预算控制与日志脱敏复查。
 - Docker Desktop + WSL2 安装（安装包届时保留到 offline-packages/）。

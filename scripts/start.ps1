@@ -1,7 +1,24 @@
-﻿# 启动 LiteLLM Proxy（pip 原生运行）
+﻿# 启动 LiteLLM Proxy（pip 原生运行）+ PostgreSQL（若已初始化）
 # 用法: powershell -ExecutionPolicy Bypass -File scripts\start.ps1
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
+
+# --- PostgreSQL（便携版，若存在则启动）---
+$pgData = Join-Path $root "data\pgdata"
+$pgCtl = "..\offline-packages\installers\pgsql-tmp\pgsql\bin\pg_ctl.exe"
+if ((Test-Path $pgData) -and (Test-Path (Join-Path $root $pgCtl))) {
+    $pgStatus = & (Join-Path $root $pgCtl) -D $pgData status 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "启动 PostgreSQL..."
+        & (Join-Path $root $pgCtl) -D $pgData -l (Join-Path $root "data\pg-log.txt") start
+    }
+    # 等待数据库就绪
+    foreach ($i in 1..10) {
+        & (Join-Path $root "..\offline-packages\installers\pgsql-tmp\pgsql\bin\pg_isready.exe") -h 127.0.0.1 -p 5432 -q
+        if ($LASTEXITCODE -eq 0) { break }
+        Start-Sleep -Seconds 1
+    }
+}
 
 # 读取 .env
 $envFile = Join-Path $root ".env"
@@ -45,14 +62,12 @@ $proc = Start-Process -FilePath $venvPython -ArgumentList @(
 Set-Content -Path $pidFile -Value $proc.Id
 Write-Host "LiteLLM 已启动 (PID $($proc.Id))，监听 http://${host_}:${port}"
 
-# 等待健康检查
+# 等待健康检查（curl.exe --noproxy 直连回环，避免系统代理拦截 127.0.0.1）
 $ok = $false
 foreach ($i in 1..30) {
     Start-Sleep -Seconds 1
-    try {
-        $r = Invoke-WebRequest -Uri "http://${host_}:${port}/health/liveliness" -UseBasicParsing -TimeoutSec 2
-        if ($r.StatusCode -eq 200) { $ok = $true; break }
-    } catch { }
+    $code = & curl.exe -s --noproxy "*" -m 2 -o NUL -w "%{http_code}" "http://${host_}:${port}/health/liveliness" 2>$null
+    if ($code -eq "200") { $ok = $true; break }
 }
 if ($ok) { Write-Host "健康检查通过。" }
 else {

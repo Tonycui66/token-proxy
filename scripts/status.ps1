@@ -27,11 +27,9 @@ if (Test-Path $pidFile) {
 }
 
 $healthUrl = "http://${host_}:${port}/health/liveliness"
-try {
-    $r = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 3
-    Write-Host "健康检查: $($r.StatusCode) $($r.Content)"
-} catch {
-    Write-Host "健康检查: 失败 ($healthUrl)"
-}
+# curl.exe --noproxy 直连回环，避免系统代理拦截本地请求
+$code = & curl.exe -s --noproxy "*" -m 3 -o NUL -w "%{http_code}" $healthUrl 2>$null
+if ($code -eq "200") { Write-Host "健康检查: 200 I'm alive!" }
+else { Write-Host "健康检查: 失败 ($healthUrl)" }
 
 if (-not $running) { exit 1 }

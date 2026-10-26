@@ -1,7 +1,15 @@
-﻿# 停止 LiteLLM Proxy
+﻿# 停止 LiteLLM Proxy + PostgreSQL（便携版，若已初始化）
 # 用法: powershell -ExecutionPolicy Bypass -File scripts\stop.ps1
 $ErrorActionPreference = "SilentlyContinue"
 $root = Split-Path -Parent $PSScriptRoot
+
+# --- PostgreSQL ---
+$pgData = Join-Path $root "data\pgdata"
+$pgCtl = Join-Path $root "..\offline-packages\installers\pgsql-tmp\pgsql\bin\pg_ctl.exe"
+if ((Test-Path $pgData) -and (Test-Path $pgCtl)) {
+    & $pgCtl -D $pgData stop -m fast
+}
+
 $pidFile = Join-Path $root "data\litellm.pid"
 
 if (-not (Test-Path $pidFile)) { Write-Host "LiteLLM 未在运行（无 pid 文件）。"; exit 0 }

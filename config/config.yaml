@@ -14,46 +14,51 @@ model_list:
   - model_name: gpt-4o-mini
     litellm_params:
       model: openai/gpt-4o-mini
-      api_key: os.environ/OPENAI_API_KEY
       input_cost_per_token: 0.00000015
       output_cost_per_token: 0.00000060
+      api_key: os.environ/OPENAI_API_KEY
 
   # gpt-4o: $2.50 / 1M input, $10.00 / 1M output
   - model_name: gpt-4o
     litellm_params:
       model: openai/gpt-4o
+      input_cost_per_token: 0.00000250
+      output_cost_per_token: 0.00001000
       api_key: os.environ/OPENAI_API_KEY
-      input_cost_per_token: 0.0000025
-      output_cost_per_token: 0.00001
 
   # ---------- DeepSeek ----------
   # deepseek-chat: $0.28 / 1M input (cache miss), $0.42 / 1M output
   - model_name: deepseek-chat
     litellm_params:
       model: deepseek/deepseek-chat
-      api_key: os.environ/DEEPSEEK_API_KEY
       input_cost_per_token: 0.00000028
       output_cost_per_token: 0.00000042
+      api_key: os.environ/DEEPSEEK_API_KEY
 
   # deepseek-reasoner: $0.28 / 1M input, $0.42 / 1M output
   - model_name: deepseek-reasoner
     litellm_params:
       model: deepseek/deepseek-reasoner
-      api_key: os.environ/DEEPSEEK_API_KEY
       input_cost_per_token: 0.00000028
       output_cost_per_token: 0.00000042
+      api_key: os.environ/DEEPSEEK_API_KEY
 
   # ---------- Unified alias: clients only use "chat" ----------
   # Two deployments share the alias: load-balanced between OpenAI and DeepSeek;
   # a failing upstream is retried on the other (Phase 2 failover acceptance).
+  # Each deployment carries the same explicit price as its standalone model.
   - model_name: chat
     litellm_params:
       model: openai/gpt-4o-mini
+      input_cost_per_token: 0.00000015
+      output_cost_per_token: 0.00000060
       api_key: os.environ/OPENAI_API_KEY
 
   - model_name: chat
     litellm_params:
       model: deepseek/deepseek-chat
+      input_cost_per_token: 0.00000028
+      output_cost_per_token: 0.00000042
       api_key: os.environ/DEEPSEEK_API_KEY
 
 general_settings:

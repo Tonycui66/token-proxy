@@ -37,4 +37,5 @@ def get(path: str, **kwargs) -> httpx.Response:
 
 
 def post(path: str, json: dict, headers: dict | None = None) -> httpx.Response:
-    return CLIENT.post(f"{BASE_URL}{path}", json=json, headers=headers or HEADERS)
+    # headers={} 表示故意不带任何鉴权头（不能用 `or`，空 dict 会被当成假值）
+    return CLIENT.post(f"{BASE_URL}{path}", json=json, headers=HEADERS if headers is None else headers)

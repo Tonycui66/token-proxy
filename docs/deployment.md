@@ -56,3 +56,21 @@ powershell -ExecutionPolicy Bypass -File scripts\backup.ps1
 ```
 
 输出到 `data\backup\<时间戳>\`，包含 `.env`（含密钥），注意保管。
+
+## 6. PostgreSQL（便携版，Phase 3）
+
+- 版本：**PostgreSQL 17.6**，便携 zip 位于 `D:\routine\offline-packages\installers\postgresql-17.6-1-windows-x64-binaries.zip`，
+  解压在 `offline-packages\installers\pgsql-tmp\pgsql\`（16 的备份在 `pgsql16/`）。
+- 数据目录：`token-proxy\data\pgdata`（初始化：`initdb -U litellm -E UTF8 --locale=C --pwfile=...`）。
+- 端口 5432，仅监听本机回环；超级用户 `litellm`，密码在 `data\.pg-pass`（勿提交）。
+- 启停已集成进 `scripts\start.ps1` / `stop.ps1`（检测到 data\pgdata 自动管理）。
+- 数据库连接：`.env` 中 `DATABASE_URL=postgresql://litellm:***@127.0.0.1:5432/litellm`。
+- prisma 客户端生成（litellm 首次部署一次性步骤）：
+
+  ```powershell
+  $env:PYTHONUTF8=1
+  token-proxy\.venv\Scripts\python.exe -m prisma generate --schema=token-proxy\.venv\Lib\site-packages\litellm_proxy_extras\schema.prisma
+  # 需要把 token-proxy\.venv\Scripts 加进 PATH（prisma-client-py 生成器依赖）
+  token-proxy\.venv\Scripts\python.exe -m prisma db push --schema=...
+  ```
+

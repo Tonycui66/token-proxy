@@ -10,6 +10,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+# 本地请求不走系统代理（否则 prisma 引擎/本地健康检查会被 Clash 拦截 502）
+os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1")
+os.environ.setdefault("no_proxy", "localhost,127.0.0.1")
+
 from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv(ROOT / ".env")
