@@ -469,6 +469,9 @@
         <button class="btn" id="btn-help">？怎么接入程序</button>
         <span class="note">把 Key 填到程序里代替上游 API Key 使用；花费自动按预算控制。</span>
       </div>
+      <div class="card" id="newkey-panel" style="display:none">
+        <div id="newkey-form"></div>
+      </div>
       <div class="card" id="help-panel" style="display:none">
         <h2>三步接入你的程序 <span class="hint">接入后可在「调试」页直接试聊</span></h2>
         <div id="help-steps"></div>
@@ -1403,82 +1406,101 @@ function confirmRevoke(k) {
   });
 }
 
+/* ---------- 新建 Key（页面内嵌展开，不弹窗） ---------- */
 $("btn-new-key").onclick = () => {
-  openModal((m) => {
-    const h = document.createElement("h3"); h.textContent = "新建 Key"; m.appendChild(h);
-
-    const f1 = div("field", m);
-    const l1 = document.createElement("label"); l1.textContent = "名称（给这个 Key 起个名字，方便辨认）"; f1.appendChild(l1);
-    const name = document.createElement("input"); name.placeholder = "例如：我的爬虫项目"; f1.appendChild(name);
-
-    const f2 = div("field", m);
-    const l2 = document.createElement("label"); l2.textContent = "能用哪些模型"; f2.appendChild(l2);
-    const sel = document.createElement("select");
-    const optAll = document.createElement("option"); optAll.value = ""; optAll.textContent = "全部模型"; sel.appendChild(optAll);
-    for (const mm of KEY_MODELS) {
-      const o = document.createElement("option"); o.value = mm; o.textContent = mm; sel.appendChild(o);
-    }
-    f2.appendChild(sel);
-
-    const f3 = div("field", m);
-    const l3 = document.createElement("label"); l3.textContent = "花费上限（美元，可不填）"; f3.appendChild(l3);
-    const budget = document.createElement("input"); budget.type = "number"; budget.min = "0"; budget.step = "0.01";
-    budget.placeholder = "不填 = 不限制"; f3.appendChild(budget);
-    div("hint", f3, "超出上限后这个 Key 会暂时停止请求，防止费用失控。");
-
-    const f4 = div("field", m);
-    const l4 = document.createElement("label"); l4.textContent = "上限周期"; f4.appendChild(l4);
-    const cyc = document.createElement("select");
-    for (const [v, t] of [["30d", "每 30 天重新计算（推荐）"], ["7d", "每 7 天"], ["90d", "每 90 天"], ["", "不重置（总额度用完即止）"]]) {
-      const o = document.createElement("option"); o.value = v; o.textContent = t; cyc.appendChild(o);
-    }
-    f4.appendChild(cyc);
-
-    const err = div("stale-note", m, "");
-    err.style.color = "var(--bad)";
-
-    const foot = div("m-foot", m);
-    const cancel = document.createElement("button"); cancel.className = "btn"; cancel.textContent = "取消"; cancel.onclick = closeModal;
-    const ok = document.createElement("button"); ok.className = "btn primary"; ok.textContent = "创建";
-    ok.onclick = async () => {
-      if (!name.value.trim()) { err.textContent = "请先给 Key 起个名字"; return; }
-      ok.disabled = true; ok.textContent = "创建中…"; err.textContent = "";
-      try {
-        const res = await api("/api/keys/create", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            alias: name.value.trim(),
-            models: sel.value ? [sel.value] : [],
-            max_budget: budget.value === "" ? null : budget.value,
-            budget_duration: budget.value === "" ? null : cyc.value,
-          }),
-        });
-        const data = await res.json();
-        if (!data.ok) { ok.disabled = false; ok.textContent = "创建"; err.textContent = "创建失败：" + data.message; return; }
-        showNewKey(data.key, name.value.trim());
-      } catch (e) { ok.disabled = false; ok.textContent = "创建"; err.textContent = "创建失败：" + e.message; }
-    };
-    foot.appendChild(cancel); foot.appendChild(ok);
-  });
+  const panel = $("newkey-panel");
+  const show = panel.style.display === "none";
+  panel.style.display = show ? "" : "none";
+  $("btn-new-key").textContent = show ? "× 收起新建表单" : "＋ 新建 Key";
+  if (show) buildNewKeyForm();
 };
 
-function showNewKey(key, alias) {
-  openModal((m) => {
-    const h = document.createElement("h3"); h.textContent = "✅ 已创建「" + alias + "」"; m.appendChild(h);
-    const p = document.createElement("p"); p.style.cssText = "font-size:13px;color:var(--text-secondary)";
-    p.textContent = "这就是你的新 Key，复制保存好："; m.appendChild(p);
-    div("newkey-box", m, key);
-    div("warn-box", m, "⚠️ 为了安全，这个 Key 只显示这一次，关掉窗口就再也看不到完整内容了（列表里只显示结尾几位）。请现在就复制保存。");
-    const foot = div("m-foot", m);
-    const copy = document.createElement("button"); copy.className = "btn"; copy.textContent = "复制";
-    copy.onclick = async () => {
-      try { await navigator.clipboard.writeText(key); copy.textContent = "已复制 ✓"; }
-      catch { copy.textContent = "请手动选中复制"; }
-    };
-    const done = document.createElement("button"); done.className = "btn primary"; done.textContent = "我已保存，关闭";
-    done.onclick = () => { closeModal(); loadKeys(); };
-    foot.appendChild(copy); foot.appendChild(done);
-  });
+function buildNewKeyForm() {
+  const f = $("newkey-form");
+  f.textContent = "";
+  const h = document.createElement("h3"); h.textContent = "新建 Key"; h.style.margin = "0 0 14px";
+  h.style.fontSize = "15px"; f.appendChild(h);
+  const grid = div(null, f, "");
+  grid.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:0 14px";
+
+  const f1 = div("field", grid);
+  const l1 = document.createElement("label"); l1.textContent = "名称（给这个 Key 起个名字，方便辨认）"; f1.appendChild(l1);
+  const name = document.createElement("input"); name.placeholder = "例如：我的爬虫项目"; f1.appendChild(name);
+
+  const f2 = div("field", grid);
+  const l2 = document.createElement("label"); l2.textContent = "能用哪些模型"; f2.appendChild(l2);
+  const sel = document.createElement("select");
+  const optAll = document.createElement("option"); optAll.value = ""; optAll.textContent = "全部模型"; sel.appendChild(optAll);
+  for (const mm of KEY_MODELS) {
+    const o = document.createElement("option"); o.value = mm; o.textContent = mm; sel.appendChild(o);
+  }
+  f2.appendChild(sel);
+
+  const f3 = div("field", grid);
+  const l3 = document.createElement("label"); l3.textContent = "花费上限（美元，可不填）"; f3.appendChild(l3);
+  const budget = document.createElement("input"); budget.type = "number"; budget.min = "0"; budget.step = "0.01";
+  budget.placeholder = "不填 = 不限制"; f3.appendChild(budget);
+
+  const f4 = div("field", grid);
+  const l4 = document.createElement("label"); l4.textContent = "上限周期"; f4.appendChild(l4);
+  const cyc = document.createElement("select");
+  for (const [v, t] of [["30d", "每 30 天重新计算（推荐）"], ["7d", "每 7 天"], ["90d", "每 90 天"], ["", "不重置（总额度用完即止）"]]) {
+    const o = document.createElement("option"); o.value = v; o.textContent = t; cyc.appendChild(o);
+  }
+  f4.appendChild(cyc);
+
+  const hint = div("field", f, "");
+  div("hint", hint, "超出上限后这个 Key 会暂时停止请求，防止费用失控。");
+
+  const err = div("stale-note", f, "");
+  err.style.color = "var(--bad)";
+
+  const foot = div("actions", f);
+  foot.style.marginTop = "6px";
+  const ok = document.createElement("button"); ok.className = "btn primary"; ok.textContent = "创建";
+  ok.onclick = async () => {
+    if (!name.value.trim()) { err.textContent = "请先给 Key 起个名字"; return; }
+    ok.disabled = true; ok.textContent = "创建中…"; err.textContent = "";
+    try {
+      const res = await api("/api/keys/create", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          alias: name.value.trim(),
+          models: sel.value ? [sel.value] : [],
+          max_budget: budget.value === "" ? null : budget.value,
+          budget_duration: budget.value === "" ? null : cyc.value,
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) { ok.disabled = false; ok.textContent = "创建"; err.textContent = "创建失败：" + data.message; return; }
+      showNewKeyInline(data.key, name.value.trim());
+    } catch (e) { ok.disabled = false; ok.textContent = "创建"; err.textContent = "创建失败：" + e.message; }
+  };
+  foot.appendChild(ok);
+}
+
+function showNewKeyInline(key, alias) {
+  const f = $("newkey-form");
+  f.textContent = "";
+  const h = document.createElement("h3"); h.textContent = "✅ 已创建「" + alias + "」";
+  h.style.cssText = "margin:0 0 10px;font-size:15px;color:var(--good)"; f.appendChild(h);
+  const p = document.createElement("p"); p.style.cssText = "font-size:13px;color:var(--text-secondary);margin:0 0 10px";
+  p.textContent = "这就是你的新 Key，复制保存好："; f.appendChild(p);
+  div("newkey-box", f, key);
+  div("warn-box", f, "⚠️ 为了安全，这个 Key 只显示这一次，收起之后就再也看不到完整内容了（列表里只显示结尾几位）。请现在就复制保存。");
+  const foot = div("actions", f);
+  const copy = document.createElement("button"); copy.className = "btn"; copy.textContent = "复制";
+  copy.onclick = async () => {
+    try { await navigator.clipboard.writeText(key); copy.textContent = "已复制 ✓"; }
+    catch { copy.textContent = "请手动选中复制"; }
+  };
+  const done = document.createElement("button"); done.className = "btn primary"; done.textContent = "我已保存，收起";
+  done.onclick = () => {
+    $("newkey-panel").style.display = "none";
+    $("btn-new-key").textContent = "＋ 新建 Key";
+    loadKeys();
+  };
+  foot.appendChild(copy); foot.appendChild(done);
 }
 
 /* ---------- 接入帮助（页面内嵌展开，不弹窗） ---------- */
