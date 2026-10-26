@@ -1,0 +1,75 @@
+# LiteLLM Proxy config
+# Notes:
+# - Upstream API keys MUST come from env vars (os.environ/), never hardcoded.
+# - model_name is the client-facing alias; multiple deployments under the
+#   same alias are load-balanced; failing upstream falls over automatically.
+# - Clients must only use aliases, never real upstream model names.
+
+# Pricing standard (explicit, do NOT rely on LiteLLM built-in floating price table)
+# Price source/date: docs/cost-tracking.md; unit: USD per token (per-1M price * 1e-6)
+# Changing a price requires updating docs/cost-tracking.md and noting it in the git commit.
+model_list:
+  # ---------- OpenAI ----------
+  # gpt-4o-mini: $0.15 / 1M input, $0.60 / 1M output
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+      input_cost_per_token: 0.00000015
+      output_cost_per_token: 0.00000060
+
+  # gpt-4o: $2.50 / 1M input, $10.00 / 1M output
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+      input_cost_per_token: 0.0000025
+      output_cost_per_token: 0.00001
+
+  # ---------- DeepSeek ----------
+  # deepseek-chat: $0.28 / 1M input (cache miss), $0.42 / 1M output
+  - model_name: deepseek-chat
+    litellm_params:
+      model: deepseek/deepseek-chat
+      api_key: os.environ/DEEPSEEK_API_KEY
+      input_cost_per_token: 0.00000028
+      output_cost_per_token: 0.00000042
+
+  # deepseek-reasoner: $0.28 / 1M input, $0.42 / 1M output
+  - model_name: deepseek-reasoner
+    litellm_params:
+      model: deepseek/deepseek-reasoner
+      api_key: os.environ/DEEPSEEK_API_KEY
+      input_cost_per_token: 0.00000028
+      output_cost_per_token: 0.00000042
+
+  # ---------- Unified alias: clients only use "chat" ----------
+  # Two deployments share the alias: load-balanced between OpenAI and DeepSeek;
+  # a failing upstream is retried on the other (Phase 2 failover acceptance).
+  - model_name: chat
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: chat
+    litellm_params:
+      model: deepseek/deepseek-chat
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+general_settings:
+  # Master key: for virtual key management only, never given to regular clients
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+litellm_settings:
+  # Drop unsupported params instead of erroring, improves client compatibility
+  drop_params: true
+  # Disable verbose logging in production to avoid leaking request content
+  set_verbose: false
+  # Token usage monitoring: writes data/usage.jsonl per request (monitor/token_monitor.py)
+  callbacks: monitor.token_monitor.monitor_instance
+  # Upstream request timeout (seconds)
+  request_timeout: 120
+  # Retries per deployment after failure
+  num_retries: 2
+  # Requests exceeding this are treated as timeout and trigger fallback (seconds)
+  fallback_timeout: 30

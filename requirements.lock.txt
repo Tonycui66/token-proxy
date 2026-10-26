@@ -1,0 +1,5 @@
+# 已验证并固定的版本（2026-10-26，Python 3.14.7）
+# 离线安装: python -m pip install --no-index --find-links <offline-packages>/wheels -r requirements.lock.txt
+litellm[proxy]==1.106.4
+pytest==9.1.1
+httpx==0.28.1

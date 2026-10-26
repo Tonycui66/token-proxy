@@ -1,0 +1,44 @@
+# Docker Compose 配置 —— 备用于迁移到 Docker Desktop 运行时（PLAN.md Phase 1 交付物）
+# 当前环境暂以 pip 原生方式运行 LiteLLM（见 README.md），本文件在
+# Docker Desktop + WSL2 就绪后启用，届时将镜像版本固定为已验证 tag。
+
+services:
+  litellm:
+    # 版本策略：先验证可用版本，再固定；禁止长期使用浮动标签
+    image: ghcr.io/berriai/litellm:main-stable
+    container_name: litellm-proxy
+    restart: unless-stopped
+    ports:
+      # 只暴露给本机回环地址
+      - "127.0.0.1:5555:4000"
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      # Phase 3 启用：DATABASE_URL: ${DATABASE_URL}
+    volumes:
+      - ./config/config.yaml:/app/config.yaml:ro
+      - ./data:/app/data
+    command:
+      - "--config=/app/config.yaml"
+      - "--port=4000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health/liveliness"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Phase 3 启用 PostgreSQL 持久化时取消注释
+  # db:
+  #   image: postgres:16
+  #   container_name: litellm-db
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_USER: litellm
+  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  #     POSTGRES_DB: litellm
+  #   volumes:
+  #     - postgres-data:/var/lib/postgresql/data
+
+# volumes:
+#   postgres-data:
