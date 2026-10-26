@@ -303,6 +303,10 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 13h4l3 7 4-16 3 9h4"/></svg>
       概览
     </button>
+    <button data-view="spend">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 6.5v11M14.8 9c-.5-.8-1.5-1.3-2.8-1.3-1.6 0-2.8.9-2.8 2.1 0 1.3 1.2 1.8 2.8 2.2 1.6.4 2.8.9 2.8 2.2 0 1.2-1.2 2.1-2.8 2.1-1.3 0-2.3-.5-2.8-1.3"/></svg>
+      消费
+    </button>
     <button data-view="keys">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="m10.85 12.15 8.9-8.9M18 5l2.3 2.3M15.5 7.5 18 10"/></svg>
       我的 Key
@@ -376,6 +380,30 @@
       <div class="card" style="margin-top:16px">
         <h2>按模型汇总</h2>
         <div id="model-table"></div>
+      </div>
+    </section>
+
+    <section class="view" id="view-spend" style="display:none">
+      <div class="filters" id="spend-filters">
+        <button data-sdays="0">今天</button>
+        <button data-sdays="7">近 7 天</button>
+        <button data-sdays="30" class="active">近 30 天</button>
+        <button data-sdays="90">近 90 天</button>
+        <button data-sdays="-1">全部</button>
+        <span class="grow"></span>
+        <span class="stale-note">按 Key 的花费卡片 · 数据来自每次调用的实时记账</span>
+      </div>
+
+      <div class="kpis" id="spend-kpis"></div>
+
+      <div class="card">
+        <h2>按 Key 花费 <span class="hint">样式同「我的 Key」，超预算自动变红</span></h2>
+        <div class="key-grid" id="spend-cards"><div class="empty">加载中…</div></div>
+      </div>
+
+      <div class="card">
+        <h2>按模型花费</h2>
+        <div id="spend-model-table"></div>
       </div>
     </section>
 
@@ -547,12 +575,13 @@ $("btn-logout").onclick = async () => {
 /* ---------- 侧边栏导航 ---------- */
 const PAGE_META = {
   overview: ["总览", "费用、请求与模型使用情况"],
+  spend: ["消费", "按 Key 和模型查看花费明细"],
   keys: ["我的 Key", "创建和管理调用凭据，控制预算"],
   users: ["用户管理", "创建用户、重置密码、控制总额"],
   settings: ["设置", "服务状态、计费单价与代理重启"],
 };
 function showView(v) {
-  const names = ["overview", "keys", "users", "settings"];
+  const names = ["overview", "spend", "keys", "users", "settings"];
   for (const name of names) {
     const view = $("view-" + name);
     if (view) view.style.display = v === name ? "" : "none";
@@ -565,6 +594,7 @@ function showView(v) {
   if (v === "settings") loadSettings();
   if (v === "keys") loadKeys();
   if (v === "users") loadUsers();
+  if (v === "spend") renderSpend();
 }
 $("nav").addEventListener("click", (ev) => {
   const b = ev.target.closest("button[data-view]");
@@ -576,6 +606,7 @@ $("btn-refresh").onclick = () => {
   if (name === "keys") loadKeys();
   else if (name === "users") loadUsers();
   else if (name === "settings") loadSettings();
+  else if (name === "spend") renderSpend();
   else load();
 };
 
@@ -969,6 +1000,140 @@ $("restart-proxy").onclick = async () => {
     msg.textContent = "重启失败：" + e.message;
   }
 };
+
+/* ---------- 消费页：按 Key 卡片 + 按模型明细 ---------- */
+let spendDays = 30;
+let KEY_SPEND_CACHE = { at: 0, list: null };   // /api/keys 的 30s 缓存，供 fp -> 卡片信息映射
+
+function filteredSpend() {
+  if (spendDays < 0) return ALL;
+  const cutoff = new Date(); cutoff.setHours(0,0,0,0);
+  if (spendDays > 0) cutoff.setDate(cutoff.getDate() - (spendDays - 1));
+  const c = spendDays === 0 ? new Date(new Date().toDateString()) : cutoff;
+  return ALL.filter(r => new Date(r.ts) >= c);
+}
+
+$("spend-filters").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button[data-sdays]");
+  if (!b) return;
+  spendDays = parseInt(b.dataset.sdays, 10);
+  for (const btn of $("spend-filters").querySelectorAll("button")) btn.classList.toggle("active", btn === b);
+  renderSpend();
+});
+
+async function spendKeyMap() {
+  if (KEY_SPEND_CACHE.list && Date.now() - KEY_SPEND_CACHE.at < 30000) return KEY_SPEND_CACHE.list;
+  try {
+    KEY_SPEND_CACHE = { at: Date.now(), list: await api("/api/keys").then(r => r.json()) };
+  } catch { KEY_SPEND_CACHE = { at: Date.now(), list: null }; }
+  return KEY_SPEND_CACHE.list;
+}
+
+async function renderSpend() {
+  const rows = filteredSpend();
+  const kpiHost = $("spend-kpis");
+  kpiHost.textContent = "";
+  const todayKey = dayKey(new Date().toISOString());
+  const last30Key = (() => { const d = new Date(); d.setDate(d.getDate() - 29); return dayKey(d.toISOString()); })();
+  let today = 0, last30 = 0, total = 0;
+  const byKey = new Map();   // fp -> {spend, reqs}
+  const byModel = new Map(); // model -> {cost, reqs}
+  for (const r of rows) {
+    const c = typeof r.cost_usd === "number" ? r.cost_usd : 0;
+    total += c;
+    const dk = dayKey(r.ts);
+    if (dk === todayKey) today += c;
+    if (dk >= last30Key) last30 += c;
+    const fp = r.key_fp || "(unknown)";
+    const kb = byKey.get(fp) || { spend: 0, reqs: 0 };
+    kb.spend += c; kb.reqs++; byKey.set(fp, kb);
+    const m = r.model || "(未知)";
+    const mb = byModel.get(m) || { cost: 0, reqs: 0 };
+    mb.cost += c; mb.reqs++; byModel.set(m, mb);
+  }
+  const tiles = [
+    ["区间总费用", fmtMoney(total), spendDays === 0 ? "今天" : spendDays > 0 ? "近 " + spendDays + " 天" : "全部时间"],
+    ["今日费用", fmtMoney(today), null],
+    ["近 30 天", fmtMoney(last30), null],
+    ["平均单次", rows.length ? fmtMoney(total / rows.length) : "—", null],
+    ["请求笔数", fmtInt(rows.length), "消费区间内"],
+  ];
+  for (const [label, value, note] of tiles) {
+    const t = div("tile", kpiHost);
+    div("label", t, label); div("value", t, value);
+    if (note) div("note", t, note);
+  }
+
+  // 按 Key 花费卡片（样式与「我的 Key」一致）
+  const host = $("spend-cards");
+  host.textContent = "";
+  const keys = await spendKeyMap();
+  const info = new Map();  // fp -> key 对象
+  if (Array.isArray(keys)) for (const k of keys) info.set((k.hash || "").slice(0, 8), k);
+  const fps = new Set([...byKey.keys(), ...info.keys()]);
+  const cards = [...fps].map(fp => {
+    const k = info.get(fp) || null;
+    return { fp, k, spend: (byKey.get(fp) || { spend: 0 }).spend, reqs: (byKey.get(fp) || { reqs: 0 }).reqs };
+  }).sort((x, y) => y.spend - x.spend);
+  if (!cards.length) { div("empty", host, "该区间没有消费记录"); }
+  for (const c of cards) {
+    const card = div("key-card", host);
+    const top = div("k-top", card);
+    const ava = document.createElement("span"); ava.className = "k-ava";
+    const alias = c.k ? (c.k.alias || "(未命名)") : "未知 Key";
+    ava.textContent = alias.trim().charAt(0).toUpperCase();
+    top.appendChild(ava);
+    const name = document.createElement("span"); name.className = "k-name";
+    name.textContent = alias; name.title = alias; top.appendChild(name);
+    const ok = c.k ? (c.k.status === "active" && !c.k.blocked) : true;
+    const pill = document.createElement("span"); pill.className = "pill " + (ok ? "ok" : "off");
+    pill.textContent = c.k ? (ok ? "正常" : "已停用") : "已删除"; top.appendChild(pill);
+
+    const meta = div("k-meta", card);
+    const budgetTxt = c.k && c.k.max_budget != null
+      ? "已用 " + fmtMoney(c.spend) + " / 预算 " + fmtMoney(c.k.max_budget) + (BUDGET_LABEL[c.k.budget_duration] ? " · " + BUDGET_LABEL[c.k.budget_duration] : "")
+      : "已用 " + fmtMoney(c.spend) + "（未设预算）";
+    div(null, meta, budgetTxt);
+    if (c.k && c.k.max_budget != null) {
+      const meter = document.createElement("div"); meter.className = "meter"; meta.appendChild(meter);
+      const pct = c.k.max_budget > 0 ? Math.min(100, 100 * c.spend / c.k.max_budget) : 0;
+      const bar = document.createElement("i");
+      bar.style.width = Math.max(2, pct) + "%";
+      if (pct >= 100) bar.className = "over"; else if (pct >= 80) bar.className = "warn";
+      meter.appendChild(bar);
+    }
+    div("dim", meta, fmtInt(c.reqs) + " 笔请求" + (ME && ME.role === "admin" && c.k && c.k.user_id ? " · 归属 " + c.k.user_id : ""));
+    if (!c.reqs) div("dim", meta, "本区间暂无调用");
+  }
+
+  // 按模型花费表
+  const tblHost = $("spend-model-table");
+  tblHost.textContent = "";
+  const items = [...byModel.entries()].sort((x, y) => y[1].cost - x[1].cost);
+  if (!items.length) { div("empty", tblHost, "该区间没有按模型的消费数据"); return; }
+  const tbl = document.createElement("table");
+  const thead = document.createElement("thead");
+  const trh = document.createElement("tr");
+  for (const t of ["模型", "请求", "费用", "占比"]) {
+    const th = document.createElement("th"); th.textContent = t; trh.appendChild(th);
+  }
+  thead.appendChild(trh); tbl.appendChild(thead);
+  const tbody = document.createElement("tbody");
+  items.forEach(([name, s], idx) => {
+    const tr = document.createElement("tr");
+    const td0 = document.createElement("td");
+    const dot = document.createElement("span"); dot.className = "swatch-dot";
+    dot.style.background = idx < 4 ? cssVar("--s" + (idx + 1)) : cssVar("--other");
+    td0.appendChild(dot); td0.appendChild(document.createTextNode(name));
+    tr.appendChild(td0);
+    const pct = total > 0 ? (100 * s.cost / total).toFixed(1) + "%" : "—";
+    for (const v of [fmtInt(s.reqs), fmtMoney(s.cost), pct]) {
+      const td = document.createElement("td"); td.className = "num"; td.textContent = v; tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody); tblHost.appendChild(tbl);
+}
 
 /* ---------- Key 管理 ---------- */
 const fmtDate = (iso) => {
